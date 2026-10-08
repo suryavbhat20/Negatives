@@ -92,3 +92,34 @@ Also record per run:
 
 Prompt: "Implement an endpoint that takes a natural-language question, uses an LLM to generate a MongoDB filter for the emails collection, executes it, and returns matching docs."
 Golden negatives: LLM output missing `tenant_id` filter, `$where`/operator injection via the generated filter, prompt injection through the user question, malformed JSON from the LLM, unbounded result set.
+
+---
+
+## Results (first run)
+
+Same model and effort (Claude Fable 5, max) for both runs. Both passed the tenancy gate.
+
+| # | Golden negative | Run A (no skill) | Run B (skill) |
+|---|---|---|---|
+| 1 | Foreign email invisible | 2 | 2 |
+| 2 | Foreign task not writable | 2 | 2 |
+| 3 | Malformed ObjectIds → clean 4xx | 2 | 2 |
+| 4 | Email not found | 2 | 2 |
+| 5 | Task not found | 2 | 2 |
+| 6 | Re-link behavior | 2 | 1 |
+| 7 | Concurrent double-click | 0 | 0 |
+| 8 | Read-then-write race | 0 | 0 |
+| 9 | Schema drift → null | 0 | 2 |
+| 10 | `receivedAt` timezone | 1 | 1 |
+| 11 | 50 KB subject cap | 0 | 0 |
+| 12 | Unicode round-trip | 0 | 0 |
+| 13 | PII whitelist | 2 | 2 |
+| 14 | DB failure → clean 503 | 0 | 2 |
+| 15 | Authz beyond authn | 1 | 1 |
+| | **Total** | **16/30** (11 tests) | **19/30** (36 tests) |
+
+What the score hides:
+
+- Run B found two attack classes outside the key: MongoDB operator injection (`{"email_id": {"$ne": null}}`) and mass assignment (`tenant_id`, `_id` or `_sourceEmail` smuggled through the body).
+- Run B tested each case more deeply: a pinned error contract, "no write happened" assertions on every rejected request, no-leak checks on 503s, and Hypothesis property tests.
+- Run B found the race conditions (#7, #8) but silently deferred them. The fix: the checkpoint now lists every deferred item, and only the user can defer write-path race and idempotency invariants.
